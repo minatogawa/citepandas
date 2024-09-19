@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard</title>
+</head>
+<body>
+    <h1>Publication Dashboard</h1>
+    <a href="{{ url_for('graph_top_10_publishers') }}">View Top 10 Publishers</a>
+    <br>
+    <a href="{{ url_for('graph_papers_per_year') }}">View Papers Published per Year</a>
+    <br>
+    <a href="{{ url_for('graph_keyword_streamgraph') }}">View Keyword Usage Over Time</a>
+    <h2>Publications</h2>
+    <table border="1">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Authors</th>
+                <th>Title</th>
+                <th>Year</th>
+                <th>Source Title</th>
+                <th>Cited By</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for publication in publications %}
+            <tr>
+                <td>{{ publication.id }}</td>
+                <td>{{ publication.authors }}</td>
+                <td>{{ publication.title }}</td>
+                <td>{{ publication.year }}</td>
+                <td>{{ publication.source_title }}</td>
+                <td>{{ publication.cited_by }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    
+</body>
+</html>

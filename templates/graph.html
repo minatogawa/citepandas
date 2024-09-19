@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+    <div id="plot"></div>
+    <h2>AI Analysis</h2>
+    <p>{{ analysis }}</p>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var plotData = JSON.parse({{ plot | tojson | safe }});
+            console.log('Plot data:', plotData);  // Log the plot data to the console for debugging
+            Plotly.newPlot('plot', plotData.data, plotData.layout);
+        });
+    </script>
+    <a href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+</body>
+</html>
