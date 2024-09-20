@@ -1,20 +1,18 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard</title>
-</head>
-<body>
-    <h1>Publication Dashboard</h1>
-    <a href="{{ url_for('graph_top_10_publishers') }}">View Top 10 Publishers</a>
-    <br>
-    <a href="{{ url_for('graph_papers_per_year') }}">View Papers Published per Year</a>
-    <br>
-    <a href="{{ url_for('graph_keyword_streamgraph') }}">View Keyword Usage Over Time</a>
-    <h2>Publications</h2>
-    <table border="1">
-        <thead>
+{% extends "base.html" %}
+
+{% block title %}CitePandas - Dashboard{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">Publication Dashboard</h1>
+<div class="mb-4">
+    <a href="{{ url_for('graph_top_10_publishers') }}" class="btn btn-primary me-2">View Top 10 Publishers</a>
+    <a href="{{ url_for('graph_papers_per_year') }}" class="btn btn-primary me-2">View Papers Published per Year</a>
+    <a href="{{ url_for('graph_keyword_streamgraph') }}" class="btn btn-primary">View Keyword Usage Over Time</a>
+</div>
+<h2 class="mb-3">Publications</h2>
+<div class="table-responsive">
+    <table class="table table-striped table-hover">
+        <thead class="table-dark">
             <tr>
                 <th>ID</th>
                 <th>Authors</th>
@@ -37,6 +35,5 @@
             {% endfor %}
         </tbody>
     </table>
-    
-</body>
-</html>
+</div>
+{% endblock %}
