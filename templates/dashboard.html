@@ -3,11 +3,11 @@
 {% block title %}CitePandas - Dashboard{% endblock %}
 
 {% block content %}
-<h1 class="mb-4">Publication Dashboard</h1>
+<h1 class="mb-4">Dashboard</h1>
 <div class="mb-4">
-    <a href="{{ url_for('graph_top_10_publishers') }}" class="btn btn-primary me-2">View Top 10 Publishers</a>
-    <a href="{{ url_for('graph_papers_per_year') }}" class="btn btn-primary me-2">View Papers Published per Year</a>
-    <a href="{{ url_for('graph_keyword_streamgraph') }}" class="btn btn-primary">View Keyword Usage Over Time</a>
+    <a href="{{ url_for('graph_top_10_publishers') }}" class="btn btn-primary me-2">Top 10 Publishers</a>
+    <a href="{{ url_for('graph_papers_per_year') }}" class="btn btn-primary me-2">Papers Published per Year</a>
+    <a href="{{ url_for('graph_keyword_streamgraph') }}" class="btn btn-primary">Keyword Usage Over Time</a>
 </div>
 <h2 class="mb-3">Publications</h2>
 <div class="table-responsive">

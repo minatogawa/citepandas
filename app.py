@@ -156,10 +156,13 @@ def get_ai_analysis(prompt):
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that analyzes academic publication data."},
+                {"role": "system", "content": "You are a scholarly assistant tasked with analyzing bibliometric data from Scopus. "
+                        "Write a detailed paragraph in the style of a results section from an academic paper. "
+                        "Your analysis should not only describe the graph but also provide insights, interpretations, "
+                        "and implications of the data."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=150
+            max_tokens=300
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -184,7 +187,7 @@ def dashboard():
     publications = Publication.query.all()
     return render_template('dashboard.html', publications=publications)
 
-@cache.memoize(timeout=36000)  # Cache for 10 hour
+@cache.memoize(timeout=36000)  # Cache for 10 hours
 def create_plot_top_10_publishers():
     publications = Publication.query.all()
     df = pd.DataFrame([(d.source_title, d.id) for d in publications], columns=['Publisher', 'ID'])
@@ -196,7 +199,22 @@ def create_plot_top_10_publishers():
         title='Top 10 Publishers',
         labels={'label': 'Publisher', 'value': 'Number of Publications'}
     )
-    fig.update_traces(textposition='inside', textinfo='percent+label')
+    fig.update_traces(
+        textposition='inside',
+        textinfo='percent',
+        hoverinfo='label+percent',
+        textfont_size=12,
+        insidetextorientation='radial'
+    )
+    fig.update_layout(
+        legend_title_text='Publishers',
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=1.05
+        )
+    )
     plot_json = json.dumps(fig.to_dict(), default=numpy_to_python)
     
     # Generate AI analysis
