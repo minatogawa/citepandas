@@ -3,3 +3,5 @@ Flask-SQLAlchemy
 pandas
 plotly
 python-dotenv
+flask_caching
+openai

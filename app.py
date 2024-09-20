@@ -10,18 +10,22 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import os
 
-load_dotenv()  # This loads the variables from .env
+# Load environment variables from .env file
+load_dotenv(override=True)
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI')
+
+# Set a default DATABASE_URI if it's not in the environment
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URI') or 'sqlite:///scopus_data.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY')
+app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY') or 'fallback_secret_key'
 app.config['CACHE_TYPE'] = 'simple'
+
 db = SQLAlchemy(app)
 cache = Cache(app)
 
 # Set up OpenAI client
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 
 class Publication(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -142,130 +146,24 @@ def numpy_to_python(obj):
         return obj
 
 def get_ai_analysis(prompt):
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant that analyzes academic publication data."},
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=150
-    )
-    return response.choices[0].message.content.strip()
-
-@cache.memoize(timeout=3600)  # Cache for 1 hour
-def create_plot_top_10_publishers():
-    publications = Publication.query.all()
-    df = pd.DataFrame([(d.source_title, d.id) for d in publications], columns=['Publisher', 'ID'])
-    top_10 = df['Publisher'].value_counts().nlargest(10)
+    api_key = os.environ.get('OPENAI_API_KEY')
     
-    fig = px.pie(
-        values=top_10.values,
-        names=top_10.index,
-        title='Top 10 Publishers',
-        labels={'label': 'Publisher', 'value': 'Number of Publications'}
-    )
-    fig.update_traces(textposition='inside', textinfo='percent+label')
-    plot_json = json.dumps(fig.to_dict(), default=numpy_to_python)
+    if not api_key:
+        return "Error: OpenAI API key not found in environment variables."
     
-    # Generate AI analysis
-    prompt = f"Analyze this pie chart of top 10 publishers: {top_10.to_string()}. Discuss the distribution of publications among these publishers, their market share, and any notable trends or dominance in the field."
-    analysis = get_ai_analysis(prompt)
-    
-    return plot_json, analysis
-
-@cache.memoize(timeout=3600)  # Cache for 1 hour
-def create_plot_papers_per_year():
-    publications = Publication.query.all()
-    df = pd.DataFrame([(d.year, d.id) for d in publications], columns=['Year', 'ID'])
-    df = df.groupby('Year').count().reset_index()
-    fig = px.bar(df, x='Year', y='ID', title='Papers Published per Year')
-    plot_json = json.dumps(fig.to_dict(), default=numpy_to_python)
-    
-    # Generate AI analysis
-    prompt = f"Analyze this graph of papers published per year: {df.to_string()}. Discuss any notable patterns or changes in publication frequency."
-    analysis = get_ai_analysis(prompt)
-    
-    return plot_json, analysis
-
-@cache.memoize(timeout=3600)  # Cache for 1 hour
-def create_streamgraph():
-    publications = Publication.query.all()
-    print(f"Number of publications: {len(publications)}")
-    
-    # Print out all column names
-    print("Column names:", Publication.__table__.columns.keys())
-    
-    # Print out the first publication's attributes
-    if publications:
-        print("First publication attributes:")
-        for attr, value in publications[0].__dict__.items():
-            if not attr.startswith('_'):
-                print(f"{attr}: {value}")
-
-    # Use the correct column for keywords
-    keyword_column = 'author_keywords'
-
-    df = pd.DataFrame([(d.year, getattr(d, keyword_column)) for d in publications], columns=['Year', 'Keywords'])
-    print(f"DataFrame shape: {df.shape}")
-    print("DataFrame head:")
-    print(df.head())
-
-    # Normalizing the keywords
-    df['Keywords'] = df['Keywords'].astype(str).str.lower().str.strip().str.replace(r'\s+', ' ', regex=True)
-    df = df.dropna(subset=['Keywords'])
-    print(f"DataFrame shape after cleaning: {df.shape}")
-
-    # Explode the keywords
-    df_exploded = df.assign(Keyword=df['Keywords'].str.split(';')).explode('Keyword').reset_index(drop=True)
-    df_exploded['Keyword'] = df_exploded['Keyword'].str.strip()
-    print(f"Exploded DataFrame shape: {df_exploded.shape}")
-    print("Exploded DataFrame head:")
-    print(df_exploded.head())
-
-    # Count keyword frequencies
-    keyword_counts = df_exploded['Keyword'].value_counts().reset_index()
-    keyword_counts.columns = ['Keyword', 'counts']
-    print("Top 20 keywords:")
-    print(keyword_counts.head(20))
-
-    # Select top 15 keywords
-    top_keywords = keyword_counts.nlargest(15, 'counts')['Keyword']
-    df_top_keywords = df_exploded[df_exploded['Keyword'].isin(top_keywords)]
-    
-    # Count frequencies per year
-    df_keywords_count = df_top_keywords.groupby(['Year', 'Keyword']).size().reset_index(name='counts')
-    print("Keywords count per year:")
-    print(df_keywords_count)
-
-    # Create the streamgraph
-    fig = go.Figure()
-    
-    for keyword in top_keywords:
-        keyword_data = df_keywords_count[df_keywords_count['Keyword'] == keyword]
-        fig.add_trace(go.Scatter(
-            x=keyword_data['Year'], 
-            y=keyword_data['counts'],
-            mode='lines',
-            stackgroup='one',
-            name=keyword
-        ))
-    
-    fig.update_layout(
-        title='Streamgraph of Top 15 Keywords Over the Years',
-        xaxis_title='Year',
-        yaxis_title='Keyword Frequency',
-        legend_title='Keywords',
-        hovermode='x unified'
-    )
-    
-    plot_json = json.dumps(fig.to_dict(), default=numpy_to_python)
-    print("Plot JSON created successfully")
-
-    # Generate AI analysis
-    prompt = f"Analyze this streamgraph of top 15 keywords over the years: {df_keywords_count.to_string()}. Discuss trends in keyword usage, emerging topics, and any notable patterns."
-    analysis = get_ai_analysis(prompt)
-    
-    return plot_json, analysis
+    client = OpenAI(api_key=api_key)
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that analyzes academic publication data."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=150
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Error in AI analysis: {str(e)}"
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -286,15 +184,115 @@ def dashboard():
     publications = Publication.query.all()
     return render_template('dashboard.html', publications=publications)
 
+@cache.memoize(timeout=36000)  # Cache for 10 hour
+def create_plot_top_10_publishers():
+    publications = Publication.query.all()
+    df = pd.DataFrame([(d.source_title, d.id) for d in publications], columns=['Publisher', 'ID'])
+    top_10 = df['Publisher'].value_counts().nlargest(10)
+    
+    fig = px.pie(
+        values=top_10.values,
+        names=top_10.index,
+        title='Top 10 Publishers',
+        labels={'label': 'Publisher', 'value': 'Number of Publications'}
+    )
+    fig.update_traces(textposition='inside', textinfo='percent+label')
+    plot_json = json.dumps(fig.to_dict(), default=numpy_to_python)
+    
+    # Generate AI analysis
+    prompt = f"Analyze this pie chart of top 10 publishers: {top_10.to_string()}. Discuss the distribution of publications among these publishers, their market share, and any notable trends or dominance in the field."
+    analysis = get_ai_analysis(prompt)
+    
+    return plot_json, analysis
+
 @app.route('/graph/top_10_publishers')
 def graph_top_10_publishers():
     plot, analysis = create_plot_top_10_publishers()
     return render_template('graph.html', plot=plot, analysis=analysis, title='Top 10 Publishers')
 
+@cache.memoize(timeout=36000)  # Cache for 10 hour
+def create_plot_papers_per_year():
+    publications = Publication.query.all()
+    df = pd.DataFrame([(d.year, d.id) for d in publications], columns=['Year', 'ID'])
+    df = df.groupby('Year').count().reset_index()
+    fig = px.bar(df, x='Year', y='ID', title='Papers Published per Year')
+    plot_json = json.dumps(fig.to_dict(), default=numpy_to_python)
+    
+    # Generate AI analysis
+    prompt = f"Analyze this graph of papers published per year: {df.to_string()}. Discuss any notable patterns or changes in publication frequency."
+    analysis = get_ai_analysis(prompt)
+    
+    return plot_json, analysis
+
 @app.route('/graph/papers_per_year')
 def graph_papers_per_year():
     plot, analysis = create_plot_papers_per_year()
     return render_template('graph.html', plot=plot, analysis=analysis, title='Papers Published per Year')
+
+@cache.memoize(timeout=3600)  # Cache for 1 hour
+def create_streamgraph():
+    publications = Publication.query.all()
+    
+    # Print out the first publication's attributes
+    # if publications:
+    #     for attr, value in publications[0].__dict__.items():
+    #         if not attr.startswith('_'):
+    #             print(f"{attr}: {value}")
+
+    # Use the correct column for keywords
+    keyword_column = 'author_keywords'
+
+    df = pd.DataFrame([(d.year, getattr(d, keyword_column)) for d in publications], columns=['Year', 'Keywords'])
+
+    # Improved keyword normalization and filtering
+    def clean_keywords(keywords):
+        if pd.isna(keywords) or keywords is None or keywords.strip() == '':
+            return []
+        return [k.strip().lower() for k in keywords.split(';') if k.strip().lower() not in ['', 'none']]
+
+    df['Keywords'] = df['Keywords'].apply(clean_keywords)
+    df = df.explode('Keywords').dropna(subset=['Keywords'])
+    df = df[df['Keywords'] != '']  # Remove any remaining empty strings
+
+    # Count keyword frequencies
+    keyword_counts = df['Keywords'].value_counts().reset_index()
+    keyword_counts.columns = ['Keyword', 'counts']
+
+    # Select top 15 keywords
+    top_keywords = keyword_counts.nlargest(15, 'counts')['Keyword']
+    df_top_keywords = df[df['Keywords'].isin(top_keywords)]
+    
+    # Count frequencies per year
+    df_keywords_count = df_top_keywords.groupby(['Year', 'Keywords']).size().reset_index(name='counts')
+
+    # Create the streamgraph
+    fig = go.Figure()
+    
+    for keyword in top_keywords:
+        keyword_data = df_keywords_count[df_keywords_count['Keywords'] == keyword]
+        fig.add_trace(go.Scatter(
+            x=keyword_data['Year'], 
+            y=keyword_data['counts'],
+            mode='lines',
+            stackgroup='one',
+            name=keyword
+        ))
+    
+    fig.update_layout(
+        title='Streamgraph of Top 15 Keywords Over the Years',
+        xaxis_title='Year',
+        yaxis_title='Keyword Frequency',
+        legend_title='Keywords',
+        hovermode='x unified'
+    )
+    
+    plot_json = json.dumps(fig.to_dict(), default=numpy_to_python)
+
+    # Generate AI analysis
+    prompt = f"Analyze this streamgraph of top 15 keywords over the years: {df_keywords_count.to_string()}. Discuss trends in keyword usage, emerging topics, and any notable patterns."
+    analysis = get_ai_analysis(prompt)
+    
+    return plot_json, analysis
 
 @app.route('/graph/keyword_streamgraph')
 def graph_keyword_streamgraph():
@@ -302,6 +300,4 @@ def graph_keyword_streamgraph():
     return render_template('graph.html', plot=plot, analysis=analysis, title='Keyword Usage Over Time')
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
     app.run(debug=True)
