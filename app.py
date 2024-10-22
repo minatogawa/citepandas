@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 import os
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.utils import secure_filename
+from sqlalchemy.sql import text
+import re
 
 # Load environment variables from .env file
 load_dotenv(override=True)
@@ -83,6 +85,18 @@ class Publication(db.Model):
     source = db.Column(db.String(50))
     eid = db.Column(db.String(50))
 
+def sanitize_string(value):
+    if value is None:
+        return None
+    # Remove any non-alphanumeric characters except spaces, commas, periods, and hyphens
+    return re.sub(r'[^\w\s,.-]', '', str(value))
+
+def sanitize_int(value):
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
 def process_csv(file):
     # Clear existing records
     db.session.query(Publication).delete()
@@ -92,52 +106,52 @@ def process_csv(file):
     df = pd.read_csv(file)
     for _, row in df.iterrows():
         publication = Publication(
-            authors=row['Authors'],
-            author_full_names=row['Author full names'],
-            author_ids=row['Author(s) ID'],
-            title=row['Title'],
-            year=int(row['Year']),
-            source_title=row['Source title'],
-            volume=row['Volume'],
-            issue=row['Issue'],
-            art_no=row['Art. No.'],
-            page_start=row['Page start'],
-            page_end=row['Page end'],
-            page_count=int(row['Page count']) if pd.notna(row['Page count']) else None,
-            cited_by=int(row['Cited by']) if pd.notna(row['Cited by']) else None,
-            doi=row['DOI'],
-            link=row['Link'],
-            affiliations=row['Affiliations'],
-            authors_with_affiliations=row['Authors with affiliations'],
-            abstract=row['Abstract'],
-            author_keywords=row['Author Keywords'],
-            index_keywords=row['Index Keywords'],
-            molecular_sequence_numbers=row['Molecular Sequence Numbers'],
-            chemicals_cas=row['Chemicals/CAS'],
-            tradenames=row['Tradenames'],
-            manufacturers=row['Manufacturers'],
-            funding_details=row['Funding Details'],
-            funding_texts=row['Funding Texts'],
-            references=row['References'],
-            correspondence_address=row['Correspondence Address'],
-            editors=row['Editors'],
-            publisher=row['Publisher'],
-            sponsors=row['Sponsors'],
-            conference_name=row['Conference name'],
-            conference_date=row['Conference date'],
-            conference_location=row['Conference location'],
-            conference_code=row['Conference code'],
-            issn=row['ISSN'],
-            isbn=row['ISBN'],
-            coden=row['CODEN'],
-            pubmed_id=row['PubMed ID'],
-            language_of_original_document=row['Language of Original Document'],
-            abbreviated_source_title=row['Abbreviated Source Title'],
-            document_type=row['Document Type'],
-            publication_stage=row['Publication Stage'],
-            open_access=row['Open Access'],
-            source=row['Source'],
-            eid=row['EID']
+            authors=sanitize_string(row['Authors']),
+            author_full_names=sanitize_string(row['Author full names']),
+            author_ids=sanitize_string(row['Author(s) ID']),
+            title=sanitize_string(row['Title']),
+            year=sanitize_int(row['Year']),
+            source_title=sanitize_string(row['Source title']),
+            volume=sanitize_string(row['Volume']),
+            issue=sanitize_string(row['Issue']),
+            art_no=sanitize_string(row['Art. No.']),
+            page_start=sanitize_string(row['Page start']),
+            page_end=sanitize_string(row['Page end']),
+            page_count=sanitize_int(row['Page count']),
+            cited_by=sanitize_int(row['Cited by']),
+            doi=sanitize_string(row['DOI']),
+            link=sanitize_string(row['Link']),
+            affiliations=sanitize_string(row['Affiliations']),
+            authors_with_affiliations=sanitize_string(row['Authors with affiliations']),
+            abstract=sanitize_string(row['Abstract']),
+            author_keywords=sanitize_string(row['Author Keywords']),
+            index_keywords=sanitize_string(row['Index Keywords']),
+            molecular_sequence_numbers=sanitize_string(row['Molecular Sequence Numbers']),
+            chemicals_cas=sanitize_string(row['Chemicals/CAS']),
+            tradenames=sanitize_string(row['Tradenames']),
+            manufacturers=sanitize_string(row['Manufacturers']),
+            funding_details=sanitize_string(row['Funding Details']),
+            funding_texts=sanitize_string(row['Funding Texts']),
+            references=sanitize_string(row['References']),
+            correspondence_address=sanitize_string(row['Correspondence Address']),
+            editors=sanitize_string(row['Editors']),
+            publisher=sanitize_string(row['Publisher']),
+            sponsors=sanitize_string(row['Sponsors']),
+            conference_name=sanitize_string(row['Conference name']),
+            conference_date=sanitize_string(row['Conference date']),
+            conference_location=sanitize_string(row['Conference location']),
+            conference_code=sanitize_string(row['Conference code']),
+            issn=sanitize_string(row['ISSN']),
+            isbn=sanitize_string(row['ISBN']),
+            coden=sanitize_string(row['CODEN']),
+            pubmed_id=sanitize_string(row['PubMed ID']),
+            language_of_original_document=sanitize_string(row['Language of Original Document']),
+            abbreviated_source_title=sanitize_string(row['Abbreviated Source Title']),
+            document_type=sanitize_string(row['Document Type']),
+            publication_stage=sanitize_string(row['Publication Stage']),
+            open_access=sanitize_string(row['Open Access']),
+            source=sanitize_string(row['Source']),
+            eid=sanitize_string(row['EID'])
         )
         db.session.add(publication)
     db.session.commit()
