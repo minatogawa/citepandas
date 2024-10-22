@@ -6,3 +6,5 @@ python-dotenv
 flask_caching
 openai
 Flask-WTF
+gunicorn
+
