@@ -9,17 +9,24 @@ import numpy as np
 from openai import OpenAI
 from dotenv import load_dotenv
 import os
+from flask_wtf.csrf import CSRFProtect
+from werkzeug.utils import secure_filename
 
 # Load environment variables from .env file
 load_dotenv(override=True)
 
 app = Flask(__name__)
 
-# Set a default DATABASE_URI if it's not in the environment
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URI') or 'sqlite:///scopus_data.db'
+# Ensure these environment variables are set
+try:
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['DATABASE_URI']
+    app.config['SECRET_KEY'] = os.environ['FLASK_SECRET_KEY']
+except KeyError as e:
+    raise RuntimeError(f"Missing required environment variable: {e}")
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY') or 'fallback_secret_key'
 app.config['CACHE_TYPE'] = 'simple'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
 db = SQLAlchemy(app)
 cache = Cache(app)
@@ -168,6 +175,15 @@ def get_ai_analysis(prompt):
     except Exception as e:
         return f"Error in AI analysis: {str(e)}"
 
+# Initialize CSRF protection
+csrf = CSRFProtect(app)
+
+# Allowed file extensions
+ALLOWED_EXTENSIONS = {'csv'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
@@ -176,7 +192,9 @@ def index():
         file = request.files['csv_file']
         if file.filename == '':
             return redirect(request.url)
-        if file and file.filename.endswith('.csv'):
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            # Process the file (e.g., save it temporarily or process directly)
             process_csv(file)
             cache.clear()  # Clear the cache when new data is uploaded
             return redirect(url_for('dashboard'))

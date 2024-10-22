@@ -5,6 +5,7 @@
 {% block content %}
 <h1 class="mb-4">CitePandas</h1>
 <form action="/" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="mb-3">
         <label for="csv_file" class="form-label">Upload CSV File</label>
         <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv">
