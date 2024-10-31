@@ -13,6 +13,7 @@ from flask_wtf.csrf import CSRFProtect
 from werkzeug.utils import secure_filename
 from sqlalchemy.sql import text
 import re
+from sqlalchemy import inspect
 
 # Load environment variables from .env file
 load_dotenv(override=True)
@@ -21,8 +22,9 @@ app = Flask(__name__)
 
 # Ensure these environment variables are set
 try:
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['DATABASE_URI']
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['POSTGRES_URI']
     app.config['SECRET_KEY'] = os.environ['FLASK_SECRET_KEY']
+    print(f"Connecting to database: {app.config['SQLALCHEMY_DATABASE_URI']}")
 except KeyError as e:
     raise RuntimeError(f"Missing required environment variable: {e}")
 
@@ -38,123 +40,186 @@ client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 
 class Publication(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    authors = db.Column(db.String(500))
-    author_full_names = db.Column(db.String(500))
-    author_ids = db.Column(db.String(500))
-    title = db.Column(db.String(500))
+    authors = db.Column(db.Text)
+    author_full_names = db.Column(db.Text)
+    author_ids = db.Column(db.Text)
+    title = db.Column(db.Text)
     year = db.Column(db.Integer)
-    source_title = db.Column(db.String(200))
-    volume = db.Column(db.String(50))
-    issue = db.Column(db.String(50))
-    art_no = db.Column(db.String(50))
-    page_start = db.Column(db.String(50))
-    page_end = db.Column(db.String(50))
+    source_title = db.Column(db.Text)
+    volume = db.Column(db.Text)
+    issue = db.Column(db.Text)
+    art_no = db.Column(db.Text)
+    page_start = db.Column(db.Text)
+    page_end = db.Column(db.Text)
     page_count = db.Column(db.Integer)
     cited_by = db.Column(db.Integer)
-    doi = db.Column(db.String(100))
-    link = db.Column(db.String(500))
+    doi = db.Column(db.Text)
+    link = db.Column(db.Text)
     affiliations = db.Column(db.Text)
     authors_with_affiliations = db.Column(db.Text)
     abstract = db.Column(db.Text)
-    author_keywords = db.Column(db.String(500))
-    index_keywords = db.Column(db.String(500))
-    molecular_sequence_numbers = db.Column(db.String(500))
-    chemicals_cas = db.Column(db.String(500))
-    tradenames = db.Column(db.String(500))
-    manufacturers = db.Column(db.String(500))
-    funding_details = db.Column(db.String(500))
+    author_keywords = db.Column(db.Text)
+    index_keywords = db.Column(db.Text)
+    molecular_sequence_numbers = db.Column(db.Text)
+    chemicals_cas = db.Column(db.Text)
+    tradenames = db.Column(db.Text)
+    manufacturers = db.Column(db.Text)
+    funding_details = db.Column(db.Text)
     funding_texts = db.Column(db.Text)
     references = db.Column(db.Text)
-    correspondence_address = db.Column(db.String(500))
-    editors = db.Column(db.String(500))
-    publisher = db.Column(db.String(500))
-    sponsors = db.Column(db.String(500))
-    conference_name = db.Column(db.String(500))
-    conference_date = db.Column(db.String(500))
-    conference_location = db.Column(db.String(500))
-    conference_code = db.Column(db.String(500))
-    issn = db.Column(db.String(50))
-    isbn = db.Column(db.String(50))
-    coden = db.Column(db.String(50))
-    pubmed_id = db.Column(db.String(50))
-    language_of_original_document = db.Column(db.String(50))
-    abbreviated_source_title = db.Column(db.String(50))
-    document_type = db.Column(db.String(50))
-    publication_stage = db.Column(db.String(50))
-    open_access = db.Column(db.String(50))
-    source = db.Column(db.String(50))
-    eid = db.Column(db.String(50))
+    correspondence_address = db.Column(db.Text)
+    editors = db.Column(db.Text)
+    publisher = db.Column(db.Text)
+    sponsors = db.Column(db.Text)
+    conference_name = db.Column(db.Text)
+    conference_date = db.Column(db.Text)
+    conference_location = db.Column(db.Text)
+    conference_code = db.Column(db.Text)
+    issn = db.Column(db.Text)
+    isbn = db.Column(db.Text)
+    coden = db.Column(db.Text)
+    pubmed_id = db.Column(db.Text)
+    language_of_original_document = db.Column(db.Text)
+    abbreviated_source_title = db.Column(db.Text)
+    document_type = db.Column(db.Text)
+    publication_stage = db.Column(db.Text)
+    open_access = db.Column(db.Text)
+    source = db.Column(db.Text)
+    eid = db.Column(db.Text)
 
 def sanitize_string(value):
-    if value is None:
+    if value is None or pd.isna(value):
         return None
     # Remove any non-alphanumeric characters except spaces, commas, periods, and hyphens
-    return re.sub(r'[^\w\s,.-]', '', str(value))
+    return str(value).strip()
 
 def sanitize_int(value):
     try:
+        if pd.isna(value):
+            return None
         return int(value)
     except (ValueError, TypeError):
         return None
 
 def process_csv(file):
-    # Clear existing records
-    db.session.query(Publication).delete()
-    db.session.commit()
+    try:
+        print("Starting CSV processing...")
+        
+        # Primeiro, vamos verificar a conexão com o banco
+        try:
+            db.session.execute(text('SELECT 1'))
+            print("Database connection is working")
+        except Exception as e:
+            print(f"Database connection error: {str(e)}")
+            raise
 
-    # Process the new CSV file
-    df = pd.read_csv(file)
-    for _, row in df.iterrows():
-        publication = Publication(
-            authors=sanitize_string(row['Authors']),
-            author_full_names=sanitize_string(row['Author full names']),
-            author_ids=sanitize_string(row['Author(s) ID']),
-            title=sanitize_string(row['Title']),
-            year=sanitize_int(row['Year']),
-            source_title=sanitize_string(row['Source title']),
-            volume=sanitize_string(row['Volume']),
-            issue=sanitize_string(row['Issue']),
-            art_no=sanitize_string(row['Art. No.']),
-            page_start=sanitize_string(row['Page start']),
-            page_end=sanitize_string(row['Page end']),
-            page_count=sanitize_int(row['Page count']),
-            cited_by=sanitize_int(row['Cited by']),
-            doi=sanitize_string(row['DOI']),
-            link=sanitize_string(row['Link']),
-            affiliations=sanitize_string(row['Affiliations']),
-            authors_with_affiliations=sanitize_string(row['Authors with affiliations']),
-            abstract=sanitize_string(row['Abstract']),
-            author_keywords=sanitize_string(row['Author Keywords']),
-            index_keywords=sanitize_string(row['Index Keywords']),
-            molecular_sequence_numbers=sanitize_string(row['Molecular Sequence Numbers']),
-            chemicals_cas=sanitize_string(row['Chemicals/CAS']),
-            tradenames=sanitize_string(row['Tradenames']),
-            manufacturers=sanitize_string(row['Manufacturers']),
-            funding_details=sanitize_string(row['Funding Details']),
-            funding_texts=sanitize_string(row['Funding Texts']),
-            references=sanitize_string(row['References']),
-            correspondence_address=sanitize_string(row['Correspondence Address']),
-            editors=sanitize_string(row['Editors']),
-            publisher=sanitize_string(row['Publisher']),
-            sponsors=sanitize_string(row['Sponsors']),
-            conference_name=sanitize_string(row['Conference name']),
-            conference_date=sanitize_string(row['Conference date']),
-            conference_location=sanitize_string(row['Conference location']),
-            conference_code=sanitize_string(row['Conference code']),
-            issn=sanitize_string(row['ISSN']),
-            isbn=sanitize_string(row['ISBN']),
-            coden=sanitize_string(row['CODEN']),
-            pubmed_id=sanitize_string(row['PubMed ID']),
-            language_of_original_document=sanitize_string(row['Language of Original Document']),
-            abbreviated_source_title=sanitize_string(row['Abbreviated Source Title']),
-            document_type=sanitize_string(row['Document Type']),
-            publication_stage=sanitize_string(row['Publication Stage']),
-            open_access=sanitize_string(row['Open Access']),
-            source=sanitize_string(row['Source']),
-            eid=sanitize_string(row['EID'])
-        )
-        db.session.add(publication)
-    db.session.commit()
+        # Tentar limpar registros existentes
+        try:
+            count = db.session.query(Publication).delete()
+            db.session.commit()
+            print(f"Successfully deleted {count} existing records")
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error deleting existing records: {str(e)}")
+            raise
+
+        # Ler o CSV
+        try:
+            df = pd.read_csv(file)
+            print(f"Successfully read CSV file with {len(df)} rows")
+            
+            # Verificar as colunas do CSV
+            print("CSV columns:", df.columns.tolist())
+        except Exception as e:
+            print(f"Error reading CSV file: {str(e)}")
+            raise
+
+        # Processar cada linha
+        records_processed = 0
+        for index, row in df.iterrows():
+            try:
+                publication = Publication(
+                    authors=sanitize_string(row.get('Authors')),
+                    author_full_names=sanitize_string(row.get('Author full names')),
+                    author_ids=sanitize_string(row.get('Author(s) ID')),
+                    title=sanitize_string(row.get('Title')),
+                    year=sanitize_int(row.get('Year')),
+                    source_title=sanitize_string(row.get('Source title')),
+                    volume=sanitize_string(row.get('Volume')),
+                    issue=sanitize_string(row.get('Issue')),
+                    art_no=sanitize_string(row.get('Art. No.')),
+                    page_start=sanitize_string(row.get('Page start')),
+                    page_end=sanitize_string(row.get('Page end')),
+                    page_count=sanitize_int(row.get('Page count')),
+                    cited_by=sanitize_int(row.get('Cited by')),
+                    doi=sanitize_string(row.get('DOI')),
+                    link=sanitize_string(row.get('Link')),
+                    affiliations=sanitize_string(row.get('Affiliations')),
+                    authors_with_affiliations=sanitize_string(row.get('Authors with affiliations')),
+                    abstract=sanitize_string(row.get('Abstract')),
+                    author_keywords=sanitize_string(row.get('Author Keywords')),
+                    index_keywords=sanitize_string(row.get('Index Keywords')),
+                    molecular_sequence_numbers=sanitize_string(row.get('Molecular Sequence Numbers')),
+                    chemicals_cas=sanitize_string(row.get('Chemicals/CAS')),
+                    tradenames=sanitize_string(row.get('Tradenames')),
+                    manufacturers=sanitize_string(row.get('Manufacturers')),
+                    funding_details=sanitize_string(row.get('Funding Details')),
+                    funding_texts=sanitize_string(row.get('Funding Texts')),
+                    references=sanitize_string(row.get('References')),
+                    correspondence_address=sanitize_string(row.get('Correspondence Address')),
+                    editors=sanitize_string(row.get('Editors')),
+                    publisher=sanitize_string(row.get('Publisher')),
+                    sponsors=sanitize_string(row.get('Sponsors')),
+                    conference_name=sanitize_string(row.get('Conference name')),
+                    conference_date=sanitize_string(row.get('Conference date')),
+                    conference_location=sanitize_string(row.get('Conference location')),
+                    conference_code=sanitize_string(row.get('Conference code')),
+                    issn=sanitize_string(row.get('ISSN')),
+                    isbn=sanitize_string(row.get('ISBN')),
+                    coden=sanitize_string(row.get('CODEN')),
+                    pubmed_id=sanitize_string(row.get('PubMed ID')),
+                    language_of_original_document=sanitize_string(row.get('Language of Original Document')),
+                    abbreviated_source_title=sanitize_string(row.get('Abbreviated Source Title')),
+                    document_type=sanitize_string(row.get('Document Type')),
+                    publication_stage=sanitize_string(row.get('Publication Stage')),
+                    open_access=sanitize_string(row.get('Open Access')),
+                    source=sanitize_string(row.get('Source')),
+                    eid=sanitize_string(row.get('EID'))
+                )
+                db.session.add(publication)
+                records_processed += 1
+                
+                # Commit a cada 100 registros para evitar transações muito grandes
+                if records_processed % 100 == 0:
+                    db.session.commit()
+                    print(f"Committed {records_processed} records")
+                    
+            except Exception as e:
+                print(f"Error processing row {index}: {str(e)}")
+                print(f"Row data: {row.to_dict()}")
+                db.session.rollback()
+                raise
+
+        # Commit final records
+        try:
+            db.session.commit()
+            print(f"Successfully processed all {records_processed} records")
+            
+            # Verify final count
+            final_count = db.session.query(Publication).count()
+            print(f"Final count in database: {final_count}")
+            
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error in final commit: {str(e)}")
+            raise
+
+    except Exception as e:
+        print(f"Fatal error in process_csv: {str(e)}")
+        db.session.rollback()
+        raise
+
+    return True
 
 def numpy_to_python(obj):
     if isinstance(obj, np.integer):
@@ -349,6 +414,28 @@ def graph_keyword_streamgraph():
     plot, analysis = create_streamgraph()
     return render_template('graph.html', plot=plot, analysis=analysis, title='Keyword Usage Over Time')
 
+# Add this after all your models are defined (after the Publication class)
+def init_db():
+    with app.app_context():
+        inspector = inspect(db.engine)
+        existing_tables = inspector.get_table_names()
+        print(f"Existing tables before creation: {existing_tables}")
+        
+        db.create_all()
+        
+        # Verify tables after creation
+        existing_tables = inspector.get_table_names()
+        print(f"Tables after creation: {existing_tables}")
+        
+        # Test database connection
+        try:
+            db.session.execute(text('SELECT 1'))
+            print("Database connection successful!")
+        except Exception as e:
+            print(f"Database connection failed: {str(e)}")
+
+# Add this at the bottom of the file, before running the app
 if __name__ == '__main__':
+    init_db()  # Create tables before running the app
     app.run(debug=True)
 
