@@ -30,7 +30,13 @@ except KeyError as e:
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['CACHE_TYPE'] = 'simple'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_size': 10,
+    'max_overflow': 20,
+    'pool_timeout': 30,
+    'pool_recycle': 1800,
+}
 
 db = SQLAlchemy(app)
 cache = Cache(app)
@@ -105,22 +111,14 @@ def process_csv(file):
     try:
         print("Starting CSV processing...")
         
-        # Primeiro, vamos verificar a conexão com o banco
+        # Otimizar a deleção de registros para PostgreSQL
         try:
-            db.session.execute(text('SELECT 1'))
-            print("Database connection is working")
-        except Exception as e:
-            print(f"Database connection error: {str(e)}")
-            raise
-
-        # Tentar limpar registros existentes
-        try:
-            count = db.session.query(Publication).delete()
+            db.session.execute(text('TRUNCATE TABLE publication RESTART IDENTITY CASCADE'))
             db.session.commit()
-            print(f"Successfully deleted {count} existing records")
+            print("Successfully truncated publication table")
         except Exception as e:
             db.session.rollback()
-            print(f"Error deleting existing records: {str(e)}")
+            print(f"Error truncating table: {str(e)}")
             raise
 
         # Ler o CSV
@@ -417,22 +415,22 @@ def graph_keyword_streamgraph():
 # Add this after all your models are defined (after the Publication class)
 def init_db():
     with app.app_context():
-        inspector = inspect(db.engine)
-        existing_tables = inspector.get_table_names()
-        print(f"Existing tables before creation: {existing_tables}")
-        
-        db.create_all()
-        
-        # Verify tables after creation
-        existing_tables = inspector.get_table_names()
-        print(f"Tables after creation: {existing_tables}")
-        
-        # Test database connection
+        # Adicionar verificação específica para PostgreSQL
         try:
-            db.session.execute(text('SELECT 1'))
-            print("Database connection successful!")
+            db.session.execute(text('SELECT version()'))
+            print("Connected to PostgreSQL successfully!")
+            
+            # Criar as tabelas
+            db.create_all()
+            
+            # Verificar as tabelas criadas
+            inspector = inspect(db.engine)
+            existing_tables = inspector.get_table_names()
+            print(f"Available tables: {existing_tables}")
+            
         except Exception as e:
-            print(f"Database connection failed: {str(e)}")
+            print(f"Database initialization error: {str(e)}")
+            raise
 
 # Add this at the bottom of the file, before running the app
 if __name__ == '__main__':
