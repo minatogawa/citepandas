@@ -14,29 +14,29 @@ from werkzeug.utils import secure_filename
 from sqlalchemy.sql import text
 import re
 from sqlalchemy import inspect
+from config.config import DevelopmentConfig, ProductionConfig
+import logging
+from logging.handlers import RotatingFileHandler
 
-# Load environment variables from .env file
-load_dotenv(override=True)
+# Load environment variables based on FLASK_ENV
+env = os.getenv('FLASK_ENV', 'development')
+env_file = f'.env.{env}'
+
+# Load environment variables from specific .env file
+if os.path.exists(env_file):
+    load_dotenv(env_file, override=True)
+    print(f"Loaded environment from {env_file}")
+else:
+    print(f"Warning: {env_file} not found, falling back to .env")
+    load_dotenv(override=True)
 
 app = Flask(__name__)
 
-# Ensure these environment variables are set
-try:
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ['POSTGRES_URI']
-    app.config['SECRET_KEY'] = os.environ['FLASK_SECRET_KEY']
-    print(f"Connecting to database: {app.config['SQLALCHEMY_DATABASE_URI']}")
-except KeyError as e:
-    raise RuntimeError(f"Missing required environment variable: {e}")
-
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['CACHE_TYPE'] = 'simple'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_size': 10,
-    'max_overflow': 20,
-    'pool_timeout': 30,
-    'pool_recycle': 1800,
-}
+# Configure app based on environment
+if os.getenv('FLASK_ENV') == 'production':
+    app.config.from_object(ProductionConfig)
+else:
+    app.config.from_object(DevelopmentConfig)
 
 db = SQLAlchemy(app)
 cache = Cache(app)
@@ -45,6 +45,7 @@ cache = Cache(app)
 client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 
 class Publication(db.Model):
+    __tablename__ = 'publication'
     id = db.Column(db.Integer, primary_key=True)
     authors = db.Column(db.Text)
     author_full_names = db.Column(db.Text)
@@ -415,25 +416,61 @@ def graph_keyword_streamgraph():
 # Add this after all your models are defined (after the Publication class)
 def init_db():
     with app.app_context():
-        # Adicionar verificação específica para PostgreSQL
         try:
-            db.session.execute(text('SELECT version()'))
-            print("Connected to PostgreSQL successfully!")
+            # Verificar a string de conexão
+            print(f"Attempting to connect with URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
             
-            # Criar as tabelas
+            # Testar conexão
+            result = db.session.execute(text('SELECT 1'))
+            print("Database connection test successful!")
+            
+            # Criar tabelas
             db.create_all()
             
-            # Verificar as tabelas criadas
+            # Verificar tabelas
             inspector = inspect(db.engine)
             existing_tables = inspector.get_table_names()
             print(f"Available tables: {existing_tables}")
             
+        except UnicodeDecodeError as e:
+            print("Error: Database connection string contains invalid characters")
+            print(f"Error details: {str(e)}")
+            raise
         except Exception as e:
             print(f"Database initialization error: {str(e)}")
             raise
+
+@app.errorhandler(404)
+def not_found_error(error):
+    return render_template('404.html'), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    db.session.rollback()
+    return render_template('500.html'), 500
 
 # Add this at the bottom of the file, before running the app
 if __name__ == '__main__':
     init_db()  # Create tables before running the app
     app.run(debug=True)
+
+def setup_logging(app):
+    if not os.path.exists('logs'):
+        os.mkdir('logs')
+    
+    file_handler = RotatingFileHandler('logs/citepandas.log', maxBytes=10240, backupCount=10)
+    
+    if app.config['FLASK_ENV'] == 'production':
+        file_handler.setLevel(logging.ERROR)
+    else:
+        file_handler.setLevel(logging.INFO)
+        
+    formatter = logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+    )
+    file_handler.setFormatter(formatter)
+    app.logger.addHandler(file_handler)
+
+# Adicione após criar a app
+setup_logging(app)
 
