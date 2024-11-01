@@ -19,6 +19,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_migrate import Migrate
 
 # Load environment variables based on FLASK_ENV
 env = os.getenv('FLASK_ENV', 'development')
@@ -41,6 +42,7 @@ else:
     app.config.from_object(DevelopmentConfig)
 
 db = SQLAlchemy(app)
+migrate = Migrate(app, db)
 cache = Cache(app)
 
 # Set up OpenAI client
@@ -491,4 +493,14 @@ def setup_logging(app):
 
 # Adicione após criar a app
 setup_logging(app)
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    try:
+        # seu código atual
+        app.logger.info('Iniciando upload do arquivo')
+        # mais código
+    except Exception as e:
+        app.logger.error(f'Erro no upload: {str(e)}')
+        return str(e), 500
 
