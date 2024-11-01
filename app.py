@@ -51,8 +51,8 @@ if os.getenv('FLASK_ENV') == 'production':
     limiter = Limiter(
         app=app,
         key_func=get_remote_address,
-        default_limits=["50 per day", "10 per hour"],
-        storage_uri=os.environ.get('REDIS_URL', "memory://")
+        storage_uri="memory://",
+        default_limits=["200 per day", "50 per hour"]
     )
 else:
     limiter = Limiter(
