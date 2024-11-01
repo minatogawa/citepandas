@@ -17,6 +17,8 @@ from sqlalchemy import inspect
 from config.config import DevelopmentConfig, ProductionConfig
 import logging
 from logging.handlers import RotatingFileHandler
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # Load environment variables based on FLASK_ENV
 env = os.getenv('FLASK_ENV', 'development')
@@ -43,6 +45,13 @@ cache = Cache(app)
 
 # Set up OpenAI client
 client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["50 per day", "10 per hour"],
+    storage_uri="memory://"  # Para produção, use Redis: "redis://localhost:6379"
+)
 
 class Publication(db.Model):
     __tablename__ = 'publication'
@@ -230,6 +239,7 @@ def numpy_to_python(obj):
     else:
         return obj
 
+@limiter.limit("2 per minute")  # Ajuste este valor conforme sua necessidade
 def get_ai_analysis(prompt):
     api_key = os.environ.get('OPENAI_API_KEY')
     
@@ -241,10 +251,7 @@ def get_ai_analysis(prompt):
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a scholarly assistant tasked with analyzing bibliometric data from Scopus. "
-                        "Write a detailed paragraph in the style of a results section from an academic paper. "
-                        "Your analysis should not only describe the graph but also provide insights, interpretations, "
-                        "and implications of the data."},
+                {"role": "system", "content": "You are a scholarly assistant..."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=300
@@ -320,6 +327,7 @@ def create_plot_top_10_publishers():
     return plot_json, analysis
 
 @app.route('/graph/top_10_publishers')
+@limiter.limit("2 per minute")  # Limite específico para esta rota
 def graph_top_10_publishers():
     plot, analysis = create_plot_top_10_publishers()
     return render_template('graph.html', plot=plot, analysis=analysis, title='Top 10 Publishers')
