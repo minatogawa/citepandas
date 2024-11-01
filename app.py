@@ -46,12 +46,21 @@ cache = Cache(app)
 # Set up OpenAI client
 client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 
-limiter = Limiter(
-    app=app,
-    key_func=get_remote_address,
-    default_limits=["50 per day", "10 per hour"],
-    storage_uri="memory://"  # Para produção, use Redis: "redis://localhost:6379"
-)
+# Update the storage for rate limiting to use memory in development
+if os.getenv('FLASK_ENV') == 'production':
+    limiter = Limiter(
+        app=app,
+        key_func=get_remote_address,
+        default_limits=["50 per day", "10 per hour"],
+        storage_uri=os.environ.get('REDIS_URL', "memory://")
+    )
+else:
+    limiter = Limiter(
+        app=app,
+        key_func=get_remote_address,
+        default_limits=["50 per day", "10 per hour"],
+        storage_uri="memory://"
+    )
 
 class Publication(db.Model):
     __tablename__ = 'publication'
@@ -460,7 +469,8 @@ def internal_error(error):
 # Add this at the bottom of the file, before running the app
 if __name__ == '__main__':
     init_db()  # Create tables before running the app
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
 
 def setup_logging(app):
     if not os.path.exists('logs'):

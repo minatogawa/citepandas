@@ -9,5 +9,28 @@ services:
       - .:/app
     environment:
       - FLASK_ENV=development
+      - POSTGRES_URI=postgresql://postgres:9vk1aplp@db:5432/dev_db
     env_file:
       - .env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=9vk1aplp
+      - POSTGRES_DB=dev_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

@@ -4,6 +4,11 @@ FROM python:3.9-slim
 # Set the working directory in the container
 WORKDIR /app
 
+# Add PostgreSQL client tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy the requirements file into the container
 COPY requirements.txt .
 
@@ -16,5 +21,7 @@ COPY . .
 # Expose the port the app runs on
 EXPOSE 5000
 
-# Run the application
-CMD ["flask", "run"]
+# Use the entrypoint script for development too
+COPY docker-entrypoint.sh ./
+RUN chmod +x ./docker-entrypoint.sh
+ENTRYPOINT ["./docker-entrypoint.sh"]
