@@ -25,3 +25,6 @@ EXPOSE 5000
 COPY docker-entrypoint.sh ./
 RUN chmod +x ./docker-entrypoint.sh
 ENTRYPOINT ["./docker-entrypoint.sh"]
+
+ENV LANG C.UTF-8
+ENV LC_ALL C.UTF-8

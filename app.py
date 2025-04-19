@@ -33,13 +33,19 @@ else:
     print(f"Warning: {env_file} not found, falling back to .env")
     load_dotenv(override=True)
 
+# Verificar que tenemos la URI de PostgreSQL
+postgres_uri = os.getenv('POSTGRES_URI')
+if not postgres_uri:
+    raise ValueError("POSTGRES_URI no está configurado en las variables de entorno")
+
+print("Database URI:", postgres_uri)  # Para debugging
+
 app = Flask(__name__)
 
-# Configure app based on environment
-if os.getenv('FLASK_ENV') == 'production':
-    app.config.from_object(ProductionConfig)
-else:
-    app.config.from_object(DevelopmentConfig)
+# Configurar SQLAlchemy antes de criar la instancia
+app.config['SQLALCHEMY_DATABASE_URI'] = postgres_uri
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'default-secret-key')
 
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
@@ -436,27 +442,25 @@ def graph_keyword_streamgraph():
 def init_db():
     with app.app_context():
         try:
-            # Verificar a string de conexão
-            print(f"Attempting to connect with URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
+            # Primero verificar que podemos conectar
+            connection = db.engine.connect()
             
-            # Testar conexão
-            result = db.session.execute(text('SELECT 1'))
-            print("Database connection test successful!")
+            # Verificar que es PostgreSQL usando una consulta específica
+            try:
+                result = connection.execute(text("SELECT current_setting('server_version')"))
+                version = result.scalar()
+                print(f"Connected to PostgreSQL version: {version}")
+            except Exception as e:
+                raise Exception("No se pudo verificar la versión de PostgreSQL. ¿Estás usando SQLite en lugar de PostgreSQL?")
+            finally:
+                connection.close()
             
-            # Criar tabelas
+            # Si llegamos aquí, estamos conectados a PostgreSQL
             db.create_all()
+            print("Tablas creadas exitosamente")
             
-            # Verificar tabelas
-            inspector = inspect(db.engine)
-            existing_tables = inspector.get_table_names()
-            print(f"Available tables: {existing_tables}")
-            
-        except UnicodeDecodeError as e:
-            print("Error: Database connection string contains invalid characters")
-            print(f"Error details: {str(e)}")
-            raise
         except Exception as e:
-            print(f"Database initialization error: {str(e)}")
+            print(f"Error de inicialización de la base de datos: {str(e)}")
             raise
 
 @app.errorhandler(404)
@@ -503,4 +507,10 @@ def upload_file():
     except Exception as e:
         app.logger.error(f'Erro no upload: {str(e)}')
         return str(e), 500
+
+# Al inicio del archivo, después de los imports
+load_dotenv(override=True)  # Forzar la carga de .env
+
+# Imprimir las variables de entorno (solo para debugging)
+print("Database URI:", os.getenv('POSTGRES_URI'))
 

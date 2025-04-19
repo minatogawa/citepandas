@@ -10,7 +10,7 @@ class Config:
     
     # Configurações comuns
     SQLALCHEMY_DATABASE_URI = os.getenv('POSTGRES_URI')
-    SECRET_KEY = os.getenv('FLASK_SECRET_KEY', 'dev-key-please-change')  # Fallback para desenvolvimento
+    SECRET_KEY = os.getenv('FLASK_SECRET_KEY', 'dev')
     
     # Configurações de Cache
     CACHE_DEFAULT_TIMEOUT = 300
@@ -59,4 +59,4 @@ class DevelopmentConfig(Config):
     }
     
     # Override do SQLALCHEMY_DATABASE_URI para desenvolvimento local
-    SQLALCHEMY_DATABASE_URI = os.getenv('POSTGRES_URI', 'sqlite:///dev.db')
+    SQLALCHEMY_DATABASE_URI = os.getenv('POSTGRES_URI')
