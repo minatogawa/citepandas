@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}CitePandas - Editor de Paper{% endblock %}
+
+{# Add Plotly.js AND TinyMCE #}
+{% block extra_head %}
+<script src='https://cdn.plot.ly/plotly-latest.min.js'></script>
+{# Use the API key passed from the backend #}
+<script src="https://cdn.tiny.cloud/1/{{ tinymce_api_key }}/tinymce/6/tinymce.min.js" referrerpolicy="origin"></script> 
+{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">Editor do Paper</h1>
+
+{# Replace the card display with a textarea for TinyMCE #}
+<div class="mb-4">
+    <textarea id="paperEditor">{{ paper_content }}</textarea> {# Load raw content here #}
+</div>
+
+{# Section to display the included graphs (Remains the same) #}
+{% if graphs_data %}
+    <h2 class="mb-3">Gráficos Incluídos (Referência)</h2>
+    {% for graph in graphs_data %}
+    <div class="card mb-4">
+        <div class="card-header">
+            {{ graph.name }}
+        </div>
+        <div class="card-body">
+            <div id="graph-{{ loop.index }}" 
+                 class="plotly-graph-container" 
+                 data-graph-name="{{ graph.name }}" 
+                 data-plot-json='{{ graph.plot_json }}'>
+            </div> 
+        </div>
+    </div>
+    {% endfor %}
+{% endif %}
+
+<div class="mt-4">
+    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Voltar ao Dashboard</a>
+    {# Add other buttons later if needed, e.g., Save #}
+</div>
+{% endblock %}
+
+{# Script block for Plotly AND TinyMCE initialization #}
+{% block extra_scripts %}
+<script>
+    // TinyMCE Initialization
+    tinymce.init({
+        selector: 'textarea#paperEditor',
+        plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount linkchecker',
+        toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
+        height: 500, // Adjust height as needed
+        menubar: false // Optional: remove the top menu bar
+        // Note: Content is loaded directly from the textarea's initial value
+    });
+
+    // Plotly Graph Rendering (after DOM loads)
+    document.addEventListener('DOMContentLoaded', function() {
+        const graphContainers = document.querySelectorAll('.plotly-graph-container');
+        
+        graphContainers.forEach(container => {
+            const graphId = container.id;
+            const graphName = container.dataset.graphName;
+            const plotJsonString = container.dataset.plotJson;
+            
+            try {
+                const plotData = JSON.parse(plotJsonString);
+                if (plotData && plotData.data && plotData.layout) {
+                    Plotly.newPlot(graphId, plotData.data, plotData.layout);
+                    console.log(`Plotly graph '${graphName}' rendered successfully.`);
+                } else {
+                    console.error(`Invalid graph data for '${graphName}':`, plotData);
+                    container.innerHTML = `<p class='text-danger'>Erro: Dados do gráfico inválidos para '${graphName}'.</p>`;
+                }
+            } catch (e) {
+                console.error(`Error rendering Plotly graph '${graphName}' (ID: ${graphId}):`, e);
+                container.innerHTML = `<p class='text-danger'>Erro ao renderizar o gráfico '${graphName}'. Verifique o console para detalhes.</p>`;
+            }
+        });
+    });
+</script>
+{% endblock %} 

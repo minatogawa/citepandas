@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_caching import Cache
 import pandas as pd
@@ -46,6 +46,8 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = postgres_uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'default-secret-key')
+app.config['TINYMCE_API_KEY'] = os.getenv('TINYMCE_API_KEY', 'no-api-key')
+app.config['FLASK_ENV'] = env
 
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
@@ -266,7 +268,7 @@ def get_ai_analysis(prompt):
     client = OpenAI(api_key=api_key)
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a scholarly assistant..."},
                 {"role": "user", "content": prompt}
@@ -302,17 +304,90 @@ def index():
             return redirect(url_for('dashboard'))
     return render_template('index.html')
 
+@app.route('/dados')
+def dados():
+    publications = Publication.query.all()
+    return render_template('dados.html', publications=publications)
+
 @app.route('/dashboard')
 def dashboard():
+    return render_template('dashboard.html')
+
+# --- Funções de Análise de IA Separadas ---
+
+@cache.memoize(timeout=36000)
+def get_analysis_top_10_publishers():
     publications = Publication.query.all()
-    return render_template('dashboard.html', publications=publications)
+    if not publications:
+        return "No publication data available for analysis."
+    df = pd.DataFrame([(d.source_title, d.id) for d in publications], columns=['Publisher', 'ID'])
+    top_10 = df['Publisher'].value_counts().nlargest(10)
+    if top_10.empty:
+        return "Not enough publisher data for analysis."
+    prompt = f"Analyze this data of top 10 publishers: {top_10.to_string()}. Discuss the distribution of publications among these publishers, their market share, and any notable trends or dominance in the field based on this data."
+    return get_ai_analysis(prompt)
+
+@cache.memoize(timeout=36000)
+def get_analysis_papers_per_year():
+    publications = Publication.query.all()
+    if not publications:
+        return "No publication data available for analysis."
+    df = pd.DataFrame([(d.year, d.id) for d in publications if d.year is not None], columns=['Year', 'ID'])
+    if df.empty:
+        return "Not enough yearly data for analysis."
+    df_grouped = df.groupby('Year').count().reset_index()
+    if df_grouped.empty:
+        return "Not enough yearly data points for analysis."
+    prompt = f"Analyze this data of papers published per year: {df_grouped.to_string()}. Discuss any notable patterns, trends, increases, or decreases in publication frequency over the years based on this data."
+    return get_ai_analysis(prompt)
+
+# Helper for streamgraph data extraction (to avoid duplication)
+def _get_streamgraph_data():
+    publications = Publication.query.all()
+    if not publications:
+        return None
+    keyword_column = 'author_keywords'
+    df = pd.DataFrame([(d.year, getattr(d, keyword_column)) for d in publications if d.year is not None], columns=['Year', 'Keywords'])
+
+    def clean_keywords(keywords):
+        if pd.isna(keywords) or keywords is None or keywords.strip() == '': return []
+        return [k.strip().lower() for k in keywords.split(';') if k.strip().lower() not in ['', 'none']]
+
+    df['Keywords'] = df['Keywords'].apply(clean_keywords)
+    df = df.explode('Keywords').dropna(subset=['Keywords'])
+    df = df[df['Keywords'] != '']
+    if df.empty: return None
+
+    keyword_counts = df['Keywords'].value_counts().reset_index()
+    keyword_counts.columns = ['Keyword', 'counts']
+    top_keywords = keyword_counts.nlargest(15, 'counts')['Keyword']
+    if top_keywords.empty: return None
+
+    df_top_keywords = df[df['Keywords'].isin(top_keywords)]
+    df_keywords_count = df_top_keywords.groupby(['Year', 'Keywords']).size().reset_index(name='counts')
+    return df_keywords_count, top_keywords
+
+
+@cache.memoize(timeout=3600)
+def get_analysis_keyword_streamgraph():
+    stream_data = _get_streamgraph_data()
+    if stream_data is None:
+        return "Not enough keyword data for streamgraph analysis."
+    df_keywords_count, _ = stream_data # We only need the count data for the prompt
+    prompt = f"Analyze this data showing the frequency of the top 15 keywords over the years: {df_keywords_count.to_string()}. Discuss trends in keyword usage, emerging topics, declining topics, and any notable patterns based *only* on this provided data."
+    return get_ai_analysis(prompt)
+
+# --- Funções de Plot Atualizadas ---
 
 @cache.memoize(timeout=36000)  # Cache for 10 hours
 def create_plot_top_10_publishers():
     publications = Publication.query.all()
     df = pd.DataFrame([(d.source_title, d.id) for d in publications], columns=['Publisher', 'ID'])
     top_10 = df['Publisher'].value_counts().nlargest(10)
-    
+    if top_10.empty: # Handle case with no data for plot
+        fig = go.Figure().update_layout(title='Top 10 Publishers (No data)')
+        return json.dumps(fig.to_dict(), default=numpy_to_python)
+        
     fig = px.pie(
         values=top_10.values,
         names=top_10.index,
@@ -336,77 +411,48 @@ def create_plot_top_10_publishers():
         )
     )
     plot_json = json.dumps(fig.to_dict(), default=numpy_to_python)
-    
-    # Generate AI analysis
-    prompt = f"Analyze this pie chart of top 10 publishers: {top_10.to_string()}. Discuss the distribution of publications among these publishers, their market share, and any notable trends or dominance in the field."
-    analysis = get_ai_analysis(prompt)
-    
-    return plot_json, analysis
+    return plot_json # Only return plot json
 
 @app.route('/graph/top_10_publishers')
 @limiter.limit("2 per minute")  # Limite específico para esta rota
 def graph_top_10_publishers():
-    plot, analysis = create_plot_top_10_publishers()
-    return render_template('graph.html', plot=plot, analysis=analysis, title='Top 10 Publishers')
+    plot_json = create_plot_top_10_publishers()
+    analysis = get_analysis_top_10_publishers() # New analysis function
+    return render_template('graph.html', plot=plot_json, analysis=analysis, title='Top 10 Publishers')
 
 @cache.memoize(timeout=36000)  # Cache for 10 hour
 def create_plot_papers_per_year():
     publications = Publication.query.all()
-    df = pd.DataFrame([(d.year, d.id) for d in publications], columns=['Year', 'ID'])
-    df = df.groupby('Year').count().reset_index()
-    fig = px.bar(df, x='Year', y='ID', title='Papers Published per Year')
+    df = pd.DataFrame([(d.year, d.id) for d in publications if d.year is not None], columns=['Year', 'ID'])
+    if df.empty:
+        fig = go.Figure().update_layout(title='Papers Published per Year (No data)')
+        return json.dumps(fig.to_dict(), default=numpy_to_python)
+        
+    df_grouped = df.groupby('Year').count().reset_index()
+    if df_grouped.empty:
+        fig = go.Figure().update_layout(title='Papers Published per Year (No data)')
+        return json.dumps(fig.to_dict(), default=numpy_to_python)
+
+    fig = px.bar(df_grouped, x='Year', y='ID', title='Papers Published per Year', labels={'ID': 'Number of Papers'})
     plot_json = json.dumps(fig.to_dict(), default=numpy_to_python)
-    
-    # Generate AI analysis
-    prompt = f"Analyze this graph of papers published per year: {df.to_string()}. Discuss any notable patterns or changes in publication frequency."
-    analysis = get_ai_analysis(prompt)
-    
-    return plot_json, analysis
+    return plot_json # Only return plot json
 
 @app.route('/graph/papers_per_year')
 def graph_papers_per_year():
-    plot, analysis = create_plot_papers_per_year()
-    return render_template('graph.html', plot=plot, analysis=analysis, title='Papers Published per Year')
+    plot_json = create_plot_papers_per_year()
+    analysis = get_analysis_papers_per_year() # New analysis function
+    return render_template('graph.html', plot=plot_json, analysis=analysis, title='Papers Published per Year')
 
 @cache.memoize(timeout=3600)  # Cache for 1 hour
 def create_streamgraph():
-    publications = Publication.query.all()
-    
-    # Print out the first publication's attributes
-    # if publications:
-    #     for attr, value in publications[0].__dict__.items():
-    #         if not attr.startswith('_'):
-    #             print(f"{attr}: {value}")
+    stream_data = _get_streamgraph_data()
+    if stream_data is None:
+        fig = go.Figure().update_layout(title='Keyword Usage Over Time (No data)')
+        return json.dumps(fig.to_dict(), default=numpy_to_python)
 
-    # Use the correct column for keywords
-    keyword_column = 'author_keywords'
+    df_keywords_count, top_keywords = stream_data
 
-    df = pd.DataFrame([(d.year, getattr(d, keyword_column)) for d in publications], columns=['Year', 'Keywords'])
-
-    # Improved keyword normalization and filtering
-    def clean_keywords(keywords):
-        if pd.isna(keywords) or keywords is None or keywords.strip() == '':
-            return []
-        return [k.strip().lower() for k in keywords.split(';') if k.strip().lower() not in ['', 'none']]
-
-    df['Keywords'] = df['Keywords'].apply(clean_keywords)
-    df = df.explode('Keywords').dropna(subset=['Keywords'])
-    df = df[df['Keywords'] != '']  # Remove any remaining empty strings
-
-    # Count keyword frequencies
-    keyword_counts = df['Keywords'].value_counts().reset_index()
-    keyword_counts.columns = ['Keyword', 'counts']
-
-    # Select top 15 keywords
-    top_keywords = keyword_counts.nlargest(15, 'counts')['Keyword']
-    df_top_keywords = df[df['Keywords'].isin(top_keywords)]
-    
-    # Count frequencies per year
-    df_keywords_count = df_top_keywords.groupby(['Year', 'Keywords']).size().reset_index(name='counts')
-
-    # Create the streamgraph
     fig = go.Figure()
-    
     for keyword in top_keywords:
         keyword_data = df_keywords_count[df_keywords_count['Keywords'] == keyword]
         fig.add_trace(go.Scatter(
@@ -424,19 +470,126 @@ def create_streamgraph():
         legend_title='Keywords',
         hovermode='x unified'
     )
-    
     plot_json = json.dumps(fig.to_dict(), default=numpy_to_python)
-
-    # Generate AI analysis
-    prompt = f"Analyze this streamgraph of top 15 keywords over the years: {df_keywords_count.to_string()}. Discuss trends in keyword usage, emerging topics, and any notable patterns."
-    analysis = get_ai_analysis(prompt)
-    
-    return plot_json, analysis
+    return plot_json # Only return plot json
 
 @app.route('/graph/keyword_streamgraph')
 def graph_keyword_streamgraph():
-    plot, analysis = create_streamgraph()
-    return render_template('graph.html', plot=plot, analysis=analysis, title='Keyword Usage Over Time')
+    plot_json = create_streamgraph()
+    analysis = get_analysis_keyword_streamgraph() # New analysis function
+    return render_template('graph.html', plot=plot_json, analysis=analysis, title='Keyword Usage Over Time')
+
+# --- Novas Rotas para Geração do Paper ---
+
+@app.route('/generate_paper', methods=['POST'])
+def generate_paper():
+    try:
+        document_items = request.json
+        if not document_items:
+            return jsonify({"error": "No items received"}), 400
+
+        paper_structure = []
+        analysis_cache = {} # Cache analyses within this request if needed
+        graphs_to_render = [] # List to store plot data for the final page
+
+        for item in document_items:
+            item_type = item.get('type')
+            item_name = item.get('name')
+            element_info = f"Type: {item_type}, Name: {item_name}"
+
+            if item_type == 'graph':
+                analysis_text = "Analysis not available." # Default
+                plot_json = None # Default plot data
+                graph_name = item.get('name') # Use name to identify graph
+
+                # Get analysis
+                if graph_name == 'Top 10 Publishers':
+                    if graph_name not in analysis_cache:
+                         analysis_cache[graph_name] = get_analysis_top_10_publishers()
+                    analysis_text = analysis_cache[graph_name]
+                    plot_json = create_plot_top_10_publishers() # Get plot JSON
+                elif graph_name == 'Papers Published per Year':
+                     if graph_name not in analysis_cache:
+                         analysis_cache[graph_name] = get_analysis_papers_per_year()
+                     analysis_text = analysis_cache[graph_name]
+                     plot_json = create_plot_papers_per_year() # Get plot JSON
+                elif graph_name == 'Keyword Usage Over Time':
+                     if graph_name not in analysis_cache:
+                         analysis_cache[graph_name] = get_analysis_keyword_streamgraph()
+                     analysis_text = analysis_cache[graph_name]
+                     plot_json = create_streamgraph() # Get plot JSON
+                
+                element_info += f"\nAnalysis:\n{analysis_text}" # Add analysis to info for the prompt
+                
+                # Store graph data for rendering on the paper page
+                if plot_json:
+                    graphs_to_render.append({
+                        "name": graph_name,
+                        "plot_json": plot_json 
+                    })
+
+            paper_structure.append(f"[{element_info}]")
+
+        # Construct the MORE RESTRICTIVE final prompt for OpenAI
+        final_prompt = (
+            "You are an assembly assistant. You will be given a sequence of elements, each marked with a Type and Name. Some elements might include pre-written Analysis text." 
+            "Your task is to assemble these elements into a single document STRICTLY following the given sequence. "
+            "1. For elements with Type 'title', output the Name as a title."
+            "2. For elements with Type 'subtitle', output the Name as a subtitle."
+            "3. For elements with Type 'paragraph', output the Name as a simple paragraph text."
+            "4. For elements with Type 'conclusion', output the Name as a concluding paragraph."
+            "5. For elements with Type 'graph', output ONLY the provided 'Analysis' text exactly as given. DO NOT elaborate, add headers, or perform extra calculations related to the graph analysis."
+            "6. For any other element Type, output its Name as plain text."
+            "7. DO NOT add any extra sections, titles, introductions, conclusions, or formatting beyond assembling the provided elements in the specified order."
+            "Output only the assembled document content.\n\n"
+            "Structure:\n" + "\n".join(paper_structure)
+        )
+        
+        # --- Chamada à OpenAI com max_tokens aumentado --- 
+        generated_paper_content = "Error generating paper." # Default
+        try:
+            api_key = os.environ.get('OPENAI_API_KEY')
+            if not api_key:
+                 generated_paper_content = "Error: OpenAI API key not found."
+            else:
+                client = OpenAI(api_key=api_key)
+                response = client.chat.completions.create(
+                    # Using the user-updated model gpt-4o-mini
+                    model="gpt-4o-mini", 
+                    messages=[
+                        # Adjusted system prompt to reflect assembly task
+                        {"role": "system", "content": "You are an assembly assistant putting document parts together according to strict instructions."}, 
+                        {"role": "user", "content": final_prompt}
+                    ],
+                    max_tokens=1500 # Keep increased tokens for potentially long assembled content
+                )
+                generated_paper_content = response.choices[0].message.content.strip()
+        except Exception as e:
+            app.logger.error(f"Error calling OpenAI for paper generation: {str(e)}")
+            generated_paper_content = f"Error during AI paper generation: {str(e)}"
+            
+        # Save both text and graph data to session
+        session['generated_paper_text'] = generated_paper_content
+        session['generated_paper_graphs'] = graphs_to_render # Store graph data
+        
+        return jsonify({"success": True, "redirect_url": url_for('paper')})
+
+    except Exception as e:
+        app.logger.error(f"Error in /generate_paper: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@app.route('/paper')
+def paper():
+    # Retrieve both text and graph data from session
+    paper_content = session.pop('generated_paper_text', 'Error: Generated paper content not found.')
+    graphs_data = session.pop('generated_paper_graphs', []) # Retrieve graph data
+    
+    # Pass raw content, graph data, and API key to the template
+    return render_template('paper.html', 
+                           paper_content=paper_content, 
+                           graphs_data=graphs_data,
+                           tinymce_api_key=app.config['TINYMCE_API_KEY']) # Passar a chave
 
 # Add this after all your models are defined (after the Publication class)
 def init_db():
@@ -462,6 +615,13 @@ def init_db():
         except Exception as e:
             print(f"Error de inicialización de la base de datos: {str(e)}")
             raise
+
+# Comando Flask CLI para inicializar o DB
+@app.cli.command('init-db')
+def init_db_command():
+    """Clear existing data and create new tables."""
+    init_db()
+    print('Initialized the database.')
 
 @app.errorhandler(404)
 def not_found_error(error):
